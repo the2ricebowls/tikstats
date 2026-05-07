@@ -1,0 +1,21 @@
+{
+  "name": "tikwm-service",
+  "version": "1.0.0",
+  "description": "Simple Express service for TikWM API with retry and error handling",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js"
+  },
+  "keywords": ["express", "tikwm", "retry", "error-handling"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.6.0",
+    "axios-retry": "^3.8.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}

@@ -1,305 +1,137 @@
 # TikWM Service
 
-Service Express để gọi TikWM API với tính năng retry, error handling và **URL Pool** để scale throughput.
+Simple Express service for TikWM with a web UI for in-memory proxy management.
 
-## 🌟 Tính năng
+## Features
 
-- ✅ Retry tự động khi gặp lỗi (3 lần với exponential backoff)
-- ✅ Xử lý rate limit (429) tự động
-- ✅ Timeout handling
-- ✅ Error handling chi tiết
-- ✅ Hỗ trợ single và multiple URLs
-- ✅ **URL Pool** - Phân phối requests đều cho nhiều workers
-- ✅ **Proxy Manager** - Giao diện web quản lý proxy
-- ✅ **Scale throughput** - Càng nhiều workers + proxies càng nhanh
+- Single video lookup: `GET /api/video?url=<tiktok_url>`
+- Batch video lookup: `POST /api/videos`
+- Web UI at `/` for adding, disabling, and deleting proxies
+- In-memory proxy storage
+- Throughput model: `1 direct server IP + active proxies`
+- No worker pool and no `URL_POOL` setup
 
-## 🏗️ Kiến trúc
+## How It Works
 
-```
-┌─────────────────┐
-│  Client/User    │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────────────┐
-│  Server Chủ (Vercel)    │
-│  Express + Pool + Proxy │
-│  - Direct (1 req/s)     │
-│  - Proxy 1 (1 req/s)    │
-│  - Proxy 2 (1 req/s)    │
-└────────┬────────────────┘
-         │
-    ┌────┴────┬────────┬────────┐
-    ▼         ▼        ▼        ▼
-┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐
-│Worker 1│ │Worker 2│ │Worker 3│ │Worker N│
-│(VPS 1) │ │(VPS 2) │ │(VPS 3) │ │(VPS N) │
-│+Proxies│ │+Proxies│ │+Proxies│ │+Proxies│
-└────┬───┘ └────┬───┘ └────┬───┘ └────┬───┘
-     │          │          │          │
-     └──────────┴──────────┴──────────┘
-                    │
-                    ▼
-            ┌──────────────┐
-            │  TikWM API   │
-            └──────────────┘
+The Vercel server itself is always one request lane. Every active proxy adds one more lane.
+
+Examples:
+
+- 0 proxies: about `1 req/s`
+- 2 proxies: about `3 req/s`
+- 5 proxies: about `6 req/s`
+
+For `POST /api/videos`, the service processes URLs in batches sized by:
+
+```text
+batch size = 1 + active proxy count
 ```
 
-**Throughput:** (1 + P) × (1 + W)
-- P = số proxies
-- W = số workers
+Within each batch, one request uses the direct server connection and the rest use active proxies. The next batch waits about 1 second.
 
-## 📦 Cài đặt
+Proxy entries are stored in memory only. On Vercel, this means they can disappear after a redeploy, cold start, or instance change.
 
-### Server Chủ (Express)
+## Install
 
 ```bash
-cd tikwm-service
 npm install
 ```
 
-### Workers (Python)
-
-Xem [tikwm-worker/README.md](../tikwm-worker/README.md)
-
-## 🚀 Deploy
-
-Xem hướng dẫn chi tiết: [DEPLOY.md](DEPLOY.md)
-
-**Tóm tắt:**
-1. Deploy server chủ lên **Vercel**
-2. Deploy workers lên **VPS** với PM2
-3. Cấu hình `URL_POOL` trong Vercel env
-
-## ⚙️ Cấu hình
-
-### .env
+## Run Locally
 
 ```bash
-PORT=3000
-
-# URL Pool - các worker servers (phân cách bằng |)
-URL_POOL=http://vps1.com:3001|http://vps2.com:3001|http://vps3.com:3001
+npm run dev
 ```
 
-**Lưu ý:**
-- Nếu **không có** `URL_POOL`: Server gọi trực tiếp TikWM API (1 req/s)
-- Nếu **có** `URL_POOL`: Server phân phối requests cho workers (N req/s)
+Open:
 
-## 📡 API Endpoints
+```text
+http://localhost:3000/
+```
 
-### 1. Health Check
+## Deploy To Vercel
+
+Deploy this `tikwm-service` folder to Vercel. No worker server and no `URL_POOL` environment variable are needed.
+
+After deploy, open:
+
+```text
+https://your-app.vercel.app/
+```
+
+Then add proxies from the UI.
+
+## Proxy Format
+
+Each line in the UI can be one of:
+
+```text
+IP:PORT
+IP:PORT:USER:PASS
+```
+
+Examples:
+
+```text
+160.250.182.61:15136:f95u:f95u
+192.168.1.1:8080
+```
+
+## API
+
+### Health
+
 ```bash
-GET /health
+curl "http://localhost:3000/health"
 ```
 
-### 2. Lấy thông tin 1 video
-```bash
-GET /api/video?url=<tiktok_url>
-```
+### Single Video
 
-**Example:**
 ```bash
 curl "http://localhost:3000/api/video?url=https://www.tiktok.com/@username/video/1234567890"
 ```
 
-### 3. Lấy thông tin nhiều videos (dùng pool)
-```bash
-POST /api/videos
-Content-Type: application/json
+### Multiple Videos
 
-{
-  "urls": [
-    "https://www.tiktok.com/@user1/video/123",
-    "https://www.tiktok.com/@user2/video/456"
-  ]
-}
-```
-
-**Example:**
 ```bash
 curl -X POST http://localhost:3000/api/videos \
   -H "Content-Type: application/json" \
   -d '{
     "urls": [
       "https://www.tiktok.com/@user1/video/123",
-      "https://www.tiktok.com/@user2/video/456",
-      "https://www.tiktok.com/@user3/video/789"
+      "https://www.tiktok.com/@user2/video/456"
     ]
   }'
 ```
 
-**Response:**
-```json
-{
-  "success": true,
-  "total": 3,
-  "successful": 3,
-  "failed": 0,
-  "usingPool": true,
-  "poolSize": 3,
-  "data": [
-    {
-      "success": true,
-      "url": "https://...",
-      "data": {...},
-      "worker": "http://vps1.com:3001"
-    },
-    ...
-  ]
-}
-```
-
-## 🎯 URL Pool Strategy
-
-### Round-Robin Distribution
-
-Pool phân phối requests theo vòng tròn:
-
-```
-Request 1 → Worker 1
-Request 2 → Worker 2
-Request 3 → Worker 3
-Request 4 → Worker 1 (lặp lại)
-...
-```
-
-### Delay Management
-
-- Mỗi worker: **1s delay** giữa các requests
-- Batch processing: Gọi parallel theo số workers
-- Auto-wait nếu worker chưa đủ 1s
-
-### Example với 3 workers:
-
-```
-Time 0s:   Worker1, Worker2, Worker3 (parallel)
-Time 1s:   Worker1, Worker2, Worker3 (parallel)
-Time 2s:   Worker1, Worker2, Worker3 (parallel)
-...
-```
-
-**Throughput:** 3 requests/second = 180 requests/minute
-
-## 📊 Response Structure
-
-```json
-{
-  "success": true,
-  "data": {
-    "id": "7636777940394462471",
-    "url": "https://...",
-    "region": "VN",
-    "title": "Video title...",
-    "contentDesc": ["Line 1", "Line 2"],
-    
-    "playCount": 277,
-    "likeCount": 10,
-    "commentCount": 0,
-    "shareCount": 0,
-    "downloadCount": 0,
-    "collectCount": 1,
-    
-    "cover": "https://...",
-    "videoUrl": "https://...",
-    "videoUrlWatermark": "https://...",
-    "duration": 41,
-    
-    "musicInfo": {
-      "title": "original sound",
-      "author": "username",
-      "original": true
-    },
-    
-    "author": {
-      "uniqueId": "username",
-      "nickname": "Display Name",
-      "avatar": "https://..."
-    },
-    
-    "createTime": 1778075928,
-    "isAd": false,
-    "_raw": {...}
-  }
-}
-```
-
-## 🔧 Error Handling
-
-Service tự động xử lý:
-
-- **400**: URL không hợp lệ hoặc lỗi từ TikWM API
-- **404**: Video không tìm thấy
-- **408**: Request timeout
-- **429**: Rate limit (retry tự động)
-- **500-599**: Server errors (retry tự động)
-- **503**: Network errors
-
-## 📈 Scaling
-
-### Tăng throughput:
-
-1. Deploy thêm workers trên VPS mới
-2. Thêm URL vào `URL_POOL`
-3. Redeploy
-
-**Example:**
-- 1 worker = ~1 req/s = 3,600 req/hour
-- 5 workers = ~5 req/s = 18,000 req/hour
-- 10 workers = ~10 req/s = 36,000 req/hour
-
-## 🛠️ Development
+### List Proxies
 
 ```bash
-# Local development
-npm run dev
-
-# Production
-npm start
+curl "http://localhost:3000/api/proxies"
 ```
 
-## 📝 Logs
-
-Server sẽ log:
-- 📥 Đang fetch video
-- ✅ Thành công
-- ❌ Lỗi
-- 🔄 Retry attempts
-- ⏳ Delay/waiting
-- 📦 Processing batch
-- 🌐 Pool info
-- 📡 Worker calls
-
-## 🔗 Links
-
-- [Deploy Guide](DEPLOY.md)
-- [Proxy Guide](PROXY-GUIDE.md) ⭐ **NEW**
-- [Worker README](../tikwm-worker/README.md)
-- [TikWM API](https://www.tikwm.com/)
-
-## 💡 Tips
-
-- Dùng pool cho batch processing (>10 URLs)
-- **Thêm proxies qua Web UI để tăng throughput** ⭐
-- Monitor worker health với `/health` endpoint
-- Scale workers + proxies theo nhu cầu
-- Backup env variables
-- Use domain thay vì IP cho workers
-
-## 🎯 Quick Start
+### Add Proxy
 
 ```bash
-# 1. Cài đặt
-cd tikwm-service
-npm install
+curl -X POST http://localhost:3000/api/proxies \
+  -H "Content-Type: application/json" \
+  -d '{"proxy":"160.250.182.61:15136:f95u:f95u"}'
+```
 
-# 2. Chạy
-npm start
+### Toggle Proxy
 
-# 3. Mở Web UI
-open http://localhost:3000
+```bash
+curl -X PATCH http://localhost:3000/api/proxies/0/toggle
+```
 
-# 4. Thêm proxies qua UI
-# 5. Test API
-curl "http://localhost:3000/api/video?url=https://tiktok.com/@user/video/123"
+### Delete Proxy
+
+```bash
+curl -X DELETE http://localhost:3000/api/proxies/0
+```
+
+## Tests
+
+```bash
+npm test
 ```

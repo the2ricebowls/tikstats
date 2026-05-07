@@ -18,28 +18,30 @@ router.get('/', (req, res) => {
 
 /**
  * POST /api/proxies - Thêm proxy mới
- * Body: { url, username?, password? }
+ * Body: { proxy: "IP:PORT:USER:PASS" hoặc "IP:PORT" }
  */
 router.post('/', (req, res) => {
   try {
-    const { url, username, password } = req.body;
+    const { proxy } = req.body;
     
-    if (!url) {
+    if (!proxy) {
       return res.status(400).json({
         success: false,
-        error: 'URL is required'
+        error: 'Proxy string is required (format: IP:PORT:USER:PASS or IP:PORT)'
       });
     }
     
-    const proxy = proxyManager.add({ url, username, password });
+    const addedProxy = proxyManager.add(proxy);
     
     res.json({
       success: true,
       message: 'Proxy added successfully',
       proxy: {
-        url: proxy.url,
-        username: proxy.username || '',
-        enabled: proxy.enabled
+        host: addedProxy.host,
+        port: addedProxy.port,
+        username: addedProxy.username || '',
+        hasAuth: !!(addedProxy.username && addedProxy.password),
+        enabled: addedProxy.enabled
       }
     });
   } catch (error) {

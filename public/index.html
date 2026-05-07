@@ -38,6 +38,17 @@
     
     .header p {
       color: #666;
+      margin-bottom: 5px;
+    }
+    
+    .header .format-hint {
+      background: #f7fafc;
+      padding: 10px;
+      border-radius: 5px;
+      margin-top: 10px;
+      font-family: monospace;
+      font-size: 13px;
+      color: #2d3748;
     }
     
     .stats {
@@ -90,24 +101,32 @@
       font-weight: 500;
     }
     
-    .form-group input {
+    .form-group input,
+    .form-group textarea {
       width: 100%;
       padding: 10px;
       border: 2px solid #e0e0e0;
       border-radius: 5px;
       font-size: 14px;
       transition: border-color 0.3s;
+      font-family: monospace;
     }
     
-    .form-group input:focus {
+    .form-group textarea {
+      min-height: 100px;
+      resize: vertical;
+    }
+    
+    .form-group input:focus,
+    .form-group textarea:focus {
       outline: none;
       border-color: #667eea;
     }
     
-    .form-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 15px;
+    .form-hint {
+      font-size: 12px;
+      color: #718096;
+      margin-top: 5px;
     }
     
     .btn {
@@ -173,6 +192,8 @@
       font-weight: 600;
       color: #333;
       margin-bottom: 5px;
+      font-family: monospace;
+      font-size: 14px;
     }
     
     .proxy-meta {
@@ -201,6 +222,11 @@
     
     .badge-warning {
       background: #ed8936;
+      color: white;
+    }
+    
+    .badge-info {
+      background: #4299e1;
       color: white;
     }
     
@@ -247,10 +273,6 @@
     }
     
     @media (max-width: 768px) {
-      .form-row {
-        grid-template-columns: 1fr;
-      }
-      
       .proxy-item {
         flex-direction: column;
         align-items: flex-start;
@@ -269,6 +291,10 @@
     <div class="header">
       <h1>🚀 TikWM Service - Proxy Manager</h1>
       <p>Quản lý proxy để tăng throughput. Mỗi proxy = +1 request/second</p>
+      <div class="format-hint">
+        <strong>📝 Proxy Format:</strong> IP:PORT:USER:PASS hoặc IP:PORT<br>
+        <strong>Ví dụ:</strong> 160.250.182.61:15136:f95u:f95u hoặc 192.168.1.1:8080
+      </div>
     </div>
     
     <!-- Stats -->
@@ -295,24 +321,15 @@
       
       <form id="add-proxy-form">
         <div class="form-group">
-          <label>Proxy URL *</label>
-          <input 
-            type="text" 
-            id="proxy-url" 
-            placeholder="http://proxy.example.com:8080 hoặc socks5://proxy.example.com:1080"
+          <label>Proxy (1 proxy mỗi dòng) *</label>
+          <textarea 
+            id="proxy-input" 
+            placeholder="160.250.182.61:15136:f95u:f95u&#10;192.168.1.1:8080:user:pass&#10;10.0.0.1:3128"
             required
-          >
-        </div>
-        
-        <div class="form-row">
-          <div class="form-group">
-            <label>Username (optional)</label>
-            <input type="text" id="proxy-username" placeholder="username">
-          </div>
-          
-          <div class="form-group">
-            <label>Password (optional)</label>
-            <input type="password" id="proxy-password" placeholder="password">
+          ></textarea>
+          <div class="form-hint">
+            Format: IP:PORT:USER:PASS hoặc IP:PORT (không có auth)<br>
+            Có thể thêm nhiều proxy cùng lúc, mỗi proxy 1 dòng
           </div>
         </div>
         
@@ -379,13 +396,14 @@
         <div class="proxy-item ${proxy.enabled ? '' : 'disabled'}">
           <div class="proxy-info">
             <div class="proxy-url">
-              ${proxy.url}
+              ${proxy.host}:${proxy.port}
               <span class="badge ${proxy.enabled ? 'badge-success' : 'badge-warning'}">
                 ${proxy.enabled ? 'Active' : 'Disabled'}
               </span>
+              ${proxy.hasAuth ? '<span class="badge badge-info">🔐 Auth</span>' : ''}
             </div>
             <div class="proxy-meta">
-              ${proxy.username ? `👤 ${proxy.username}` : '🔓 No auth'}
+              ${proxy.hasAuth ? `👤 ${proxy.username}` : '🔓 No auth'}
               ${proxy.lastUsed ? ` • Last used: ${new Date(proxy.lastUsed).toLocaleTimeString()}` : ''}
             </div>
           </div>
@@ -405,28 +423,47 @@
     document.getElementById('add-proxy-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       
-      const url = document.getElementById('proxy-url').value;
-      const username = document.getElementById('proxy-username').value;
-      const password = document.getElementById('proxy-password').value;
+      const input = document.getElementById('proxy-input').value;
+      const proxies = input.split('\n').map(p => p.trim()).filter(p => p.length > 0);
       
-      try {
-        const response = await fetch(`${API_BASE}/api/proxies`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url, username, password })
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-          showAlert('✅ Proxy đã được thêm thành công!', 'success');
-          document.getElementById('add-proxy-form').reset();
-          loadProxies();
-        } else {
-          showAlert(`❌ ${data.error}`, 'error');
+      if (proxies.length === 0) {
+        showAlert('❌ Vui lòng nhập ít nhất 1 proxy', 'error');
+        return;
+      }
+      
+      let successCount = 0;
+      let errorCount = 0;
+      
+      for (const proxy of proxies) {
+        try {
+          const response = await fetch(`${API_BASE}/api/proxies`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ proxy })
+          });
+          
+          const data = await response.json();
+          
+          if (data.success) {
+            successCount++;
+          } else {
+            errorCount++;
+            console.error(`Failed to add ${proxy}:`, data.error);
+          }
+        } catch (error) {
+          errorCount++;
+          console.error(`Failed to add ${proxy}:`, error);
         }
-      } catch (error) {
-        showAlert('❌ Không thể thêm proxy', 'error');
+      }
+      
+      if (successCount > 0) {
+        showAlert(`✅ Đã thêm ${successCount} proxy thành công!`, 'success');
+        document.getElementById('add-proxy-form').reset();
+        loadProxies();
+      }
+      
+      if (errorCount > 0) {
+        showAlert(`⚠️ ${errorCount} proxy thêm thất bại. Kiểm tra format!`, 'error');
       }
     });
     

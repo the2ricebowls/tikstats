@@ -121,7 +121,8 @@ Each completed item has `status: "success"` when TikWM returns `code: 0`.
 Each failed item has `status: "failed"`.
 
 The response also includes `completed`, `failed`, `pending`, `batchSize`, and
-`maxWaitMs` so an outside job runner can decide what to retry.
+the service deadline used for the run, so an outside job runner can decide what
+to retry.
 
 ### List Proxies
 

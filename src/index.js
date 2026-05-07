@@ -45,10 +45,11 @@ app.post('/api/videos', async (req, res) => {
     });
   }
 
-  const results = await tikwmService.getMultipleVideosInfo(urls);
+  const { results, summary } = await tikwmService.getMultipleVideosInfo(urls);
 
   res.json({
     total: urls.length,
+    ...summary,
     data: results
   });
 });

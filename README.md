@@ -104,6 +104,25 @@ curl -X POST http://localhost:3000/api/videos \
   }'
 ```
 
+The service uses a fixed internal deadline of `300000` ms (300 seconds), matching
+the configured Vercel function duration for this project. Clients do not need to
+send a deadline. When the deadline is reached,
+unfinished URLs are still returned with:
+
+```json
+{
+  "code": -2,
+  "msg": "Not processed before deadline",
+  "status": "pending"
+}
+```
+
+Each completed item has `status: "success"` when TikWM returns `code: 0`.
+Each failed item has `status: "failed"`.
+
+The response also includes `completed`, `failed`, `pending`, `batchSize`, and
+`maxWaitMs` so an outside job runner can decide what to retry.
+
 ### List Proxies
 
 ```bash

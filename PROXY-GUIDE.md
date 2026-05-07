@@ -89,6 +89,10 @@ curl -X DELETE http://localhost:3000/api/proxies
 ## Batch Requests
 
 `POST /api/videos` uses batches sized by `1 + active proxies`.
+Proxy requests time out after 3 seconds. The server keeps the call synchronous.
+It uses an internal deadline of `300000` ms, matching the configured Vercel
+function duration for this project. Clients only send URLs; unfinished URLs are
+returned as `status: "pending"` with `code: -2`.
 
 Example with 2 active proxies:
 

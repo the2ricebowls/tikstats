@@ -131,6 +131,7 @@ class ProxyManager {
     if (!proxy) return null;
 
     return {
+      protocol: 'http',
       host: proxy.host,
       port: parseInt(proxy.port),
       auth: proxy.username && proxy.password ? {

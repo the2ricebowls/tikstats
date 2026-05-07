@@ -102,7 +102,7 @@ Batch 1:
   URL 2 -> proxy 1
   URL 3 -> proxy 2
 
-wait about 1 second
+Batch 2 starts as soon as Batch 1 settles.
 
 Batch 2:
   URL 4 -> direct Vercel server IP

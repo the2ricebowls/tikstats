@@ -27,7 +27,7 @@ For `POST /api/videos`, the service processes URLs in batches sized by:
 batch size = 1 + active proxy count
 ```
 
-Within each batch, one request uses the direct server connection and the rest use active proxies. The next batch waits about 1 second.
+Within each batch, one request uses the direct server connection and the rest use active proxies. The next batch starts as soon as the current batch settles, so the service uses the available Vercel runtime as aggressively as possible.
 
 Proxy entries are stored in memory only. On Vercel, this means they can disappear after a redeploy, cold start, or instance change.
 
@@ -79,19 +79,81 @@ Examples:
 
 ## API
 
+Base URL when running locally:
+
+```text
+http://localhost:3000
+```
+
+Base URL after Vercel deploy:
+
+```text
+https://your-app.vercel.app
+```
+
 ### Health
+
+Check whether the service is running.
 
 ```bash
 curl "http://localhost:3000/health"
 ```
 
+Response:
+
+```json
+{
+  "status": "ok",
+  "timestamp": "2026-05-08T10:00:00.000Z"
+}
+```
+
 ### Single Video
+
+Fetch one TikTok URL.
 
 ```bash
 curl "http://localhost:3000/api/video?url=https://www.tiktok.com/@username/video/1234567890"
 ```
 
+Success response is the TikWM response:
+
+```json
+{
+  "code": 0,
+  "msg": "success",
+  "processed_time": 0.35,
+  "data": {
+    "id": "1234567890",
+    "title": "...",
+    "play": "https://..."
+  }
+}
+```
+
+Missing URL:
+
+```json
+{
+  "code": -1,
+  "msg": "URL parameter is required"
+}
+```
+
+Invalid or unparseable TikTok URL:
+
+```json
+{
+  "code": -1,
+  "msg": "Please check url",
+  "url": "https://..."
+}
+```
+
 ### Multiple Videos
+
+Fetch many TikTok URLs in one synchronous call. The client only sends `urls`.
+The service owns timeout/deadline settings internally.
 
 ```bash
 curl -X POST http://localhost:3000/api/videos \
@@ -104,33 +166,142 @@ curl -X POST http://localhost:3000/api/videos \
   }'
 ```
 
-The service uses a fixed internal deadline of `300000` ms (300 seconds), matching
-the configured Vercel function duration for this project. Clients do not need to
-send a deadline. When the deadline is reached,
-unfinished URLs are still returned with:
+Request body:
 
 ```json
 {
-  "code": -2,
-  "msg": "Not processed before deadline",
-  "status": "pending"
+  "urls": ["https://www.tiktok.com/@user/video/123"]
 }
 ```
 
-Each completed item has `status: "success"` when TikWM returns `code: 0`.
-Each failed item has `status: "failed"`.
+Rules:
 
-The response also includes `completed`, `failed`, `pending`, `batchSize`, and
-the service deadline used for the run, so an outside job runner can decide what
-to retry.
+- `urls` must be a non-empty array.
+- The service uses an internal deadline of `300000` ms, matching `maxDuration: 300` in `vercel.json`.
+- Proxy requests time out after `3000` ms.
+- Direct server requests use a `30000` ms timeout.
+- Processing lanes are `1 direct server lane + active proxy count`.
+- If the deadline is reached, unfinished URLs are returned as `pending`.
 
-### List Proxies
+Top-level response:
+
+```json
+{
+  "total": 100,
+  "completed": 80,
+  "failed": 5,
+  "pending": 15,
+  "batchSize": 6,
+  "maxWaitMs": 300000,
+  "data": []
+}
+```
+
+Top-level fields:
+
+- `total`: number of URLs received.
+- `completed`: number of items with `status: "success"`.
+- `failed`: number of items that were tried and failed.
+- `pending`: number of items not processed before the service deadline.
+- `batchSize`: number of parallel lanes used for each batch, equal to `1 + active proxies`.
+- `maxWaitMs`: internal service deadline used for this run.
+- `data`: per-URL results.
+
+Successful item:
+
+```json
+{
+  "url": "https://www.tiktok.com/@user/video/123",
+  "status": "success",
+  "code": 0,
+  "msg": "success",
+  "processed_time": 0.35,
+  "data": {
+    "id": "123",
+    "title": "...",
+    "play": "https://..."
+  }
+}
+```
+
+Failed item:
+
+```json
+{
+  "url": "https://www.tiktok.com/@user/video/456",
+  "status": "failed",
+  "code": -1,
+  "msg": "timeout of 3000ms exceeded"
+}
+```
+
+Pending item:
+
+```json
+{
+  "url": "https://www.tiktok.com/@user/video/789",
+  "status": "pending",
+  "code": -2,
+  "msg": "Not processed before deadline"
+}
+```
+
+Status meanings:
+
+- `success`: URL was processed successfully. The item includes TikWM data.
+- `failed`: URL was attempted, but the request failed or TikWM returned an error.
+- `pending`: URL was not processed before the service deadline. The outer job runner should retry these URLs later.
+
+Recommended outer job handling:
+
+- Retry `pending` URLs first.
+- Retry `failed` URLs only if your job policy wants another attempt.
+- Treat `success` URLs as done.
+- You do not need to send any deadline field; this service handles it.
+
+Invalid batch request:
+
+```json
+{
+  "code": -1,
+  "msg": "URLs array is required and must not be empty"
+}
+```
+
+### Proxy API
+
+Proxies are in-memory. On Vercel, the list can reset after redeploy, cold start,
+or instance change.
+
+#### List Proxies
 
 ```bash
 curl "http://localhost:3000/api/proxies"
 ```
 
-### Add Proxy
+Response:
+
+```json
+{
+  "success": true,
+  "count": 1,
+  "active": 1,
+  "proxies": [
+    {
+      "id": 0,
+      "proxy": "160.250.182.61:15136:f95u:f95u",
+      "host": "160.250.182.61",
+      "port": "15136",
+      "username": "f95u",
+      "hasAuth": true,
+      "enabled": true,
+      "lastUsed": 1770000000000
+    }
+  ]
+}
+```
+
+#### Add Proxy
 
 ```bash
 curl -X POST http://localhost:3000/api/proxies \
@@ -138,16 +309,75 @@ curl -X POST http://localhost:3000/api/proxies \
   -d '{"proxy":"160.250.182.61:15136:f95u:f95u"}'
 ```
 
-### Toggle Proxy
+Response:
+
+```json
+{
+  "success": true,
+  "message": "Proxy added successfully",
+  "proxy": {
+    "host": "160.250.182.61",
+    "port": "15136",
+    "username": "f95u",
+    "hasAuth": true,
+    "enabled": true
+  }
+}
+```
+
+Invalid proxy:
+
+```json
+{
+  "success": false,
+  "error": "Proxy string is required (format: IP:PORT:USER:PASS or IP:PORT)"
+}
+```
+
+#### Toggle Proxy
 
 ```bash
 curl -X PATCH http://localhost:3000/api/proxies/0/toggle
 ```
 
-### Delete Proxy
+Response:
+
+```json
+{
+  "success": true,
+  "message": "Proxy disabled",
+  "enabled": false
+}
+```
+
+#### Delete Proxy
 
 ```bash
 curl -X DELETE http://localhost:3000/api/proxies/0
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "message": "Proxy removed successfully"
+}
+```
+
+#### Clear All Proxies
+
+```bash
+curl -X DELETE http://localhost:3000/api/proxies
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "message": "All proxies cleared"
+}
 ```
 
 ## Tests
